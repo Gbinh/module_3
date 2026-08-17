@@ -1,0 +1,69 @@
+import cors, { type CorsOptions } from 'cors'
+import type { RequestHandler } from 'express'
+
+const DEVELOPMENT_PORTS = new Set(['5173', '8081', '8082', '19006'])
+const DEVELOPMENT_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
+const ALLOWED_HEADERS = [
+  'Content-Type',
+  'Authorization',
+  'X-Requested-With',
+  'X-Device-ID',
+  'X-Captured-At',
+  'Accept',
+]
+
+function configuredOrigins(environment: NodeJS.ProcessEnv): Set<string> {
+  const origins = [
+    ...(environment.CLIENT_URLS ?? '').split(','),
+    environment.CLIENT_URL ?? '',
+  ]
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+  return new Set(origins)
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  const octets = hostname.split('.').map(Number)
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return false
+  }
+  return octets[0] === 10
+    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+    || (octets[0] === 192 && octets[1] === 168)
+}
+
+function isDevelopmentOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin)
+    return parsed.protocol === 'http:'
+      && DEVELOPMENT_PORTS.has(parsed.port)
+      && (DEVELOPMENT_HOSTS.has(parsed.hostname) || isPrivateIpv4(parsed.hostname))
+  } catch {
+    return false
+  }
+}
+
+export function createCorsOptions(environment: NodeJS.ProcessEnv = process.env): CorsOptions {
+  const allowedOrigins = configuredOrigins(environment)
+  const isProduction = environment.NODE_ENV === 'production'
+
+  return {
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin) || (!isProduction && isDevelopmentOrigin(origin))) {
+        callback(null, true)
+        return
+      }
+      callback(new Error(`CORS: Origin ${origin} not allowed`))
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ALLOWED_HEADERS,
+  }
+}
+
+export function createCorsMiddleware(environment: NodeJS.ProcessEnv = process.env): RequestHandler {
+  return cors(createCorsOptions(environment))
+}
+
+export const corsMiddleware = createCorsMiddleware()
+export const handleCors = corsMiddleware
